@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>重要紧急四象限 - 任务管理工具</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- 登录模态框 -->
+    <div class="modal login-modal" id="loginModal">
+        <div class="modal-content">
+            <div class="modal-header">用户登录</div>
+            
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" required placeholder="请输入用户名">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" required placeholder="请输入密码">
+                </div>
+                
+                <div class="button-group">
+                    <button type="button" class="btn btn-secondary" onclick="closeLoginModal()">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="loginUser()">登录</button>
+                    <button type="button" class="btn btn-tertiary" onclick="showRegisterForm()">注册</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 注册模态框 -->
+    <div class="modal" id="registerModal">
+        <div class="modal-content">
+            <div class="modal-header">用户注册</div>
+            
+            <form id="registerForm">
+                <div class="form-group">
+                    <label for="regUsername">用户名</label>
+                    <input type="text" id="regUsername" required placeholder="请输入用户名">
+                </div>
+                
+                <div class="form-group">
+                    <label for="regPassword">密码</label>
+                    <input type="password" id="regPassword" required placeholder="请输入密码">
+                </div>
+                
+                <div class="form-group">
+                    <label for="regConfirm">确认密码</label>
+                    <input type="password" id="regConfirm" required placeholder="请再次输入密码">
+                </div>
+                
+                <div class="button-group">
+                    <button type="button" class="btn btn-secondary" onclick="closeRegisterModal()">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="registerUser()">注册</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 主页面 -->
+    <div id="main-page" style="display: none;">
+        <div class="header">
+            <div class="user-avatar" id="userAvatar" onclick="showUserProfile()">
+                登录
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="matrix-container">
+                <div class="matrix" id="matrix">
+                    <!-- 象限标签 -->
+                    <div class="quadrant-label q1">重要不紧急</div>
+                    <div class="quadrant-label q2">重要紧急</div>
+                    <div class="quadrant-label q3">不重要不紧急</div>
+                    <div class="quadrant-label q4">不重要紧急</div>
+                    
+                    <!-- 坐标轴 -->
+                    <div class="axis axis-x"></div>
+                    <div class="axis axis-y"></div>
+                    
+                    <!-- 添加按钮 -->
+                    <button class="add-button" id="addButton" onclick="showAddTaskModal()">+</button>
+                    
+                    <!-- 工具提示 -->
+                    <div class="tooltip" id="taskTooltip"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 用户资料页面 -->
+    <div id="user-page" style="display: none;">
+        <button class="back-button" onclick="showMainPage()">←</button>
+        
+        <div class="user-profile">
+            <div class="profile-header">
+                <h1 id="userProfileName">用户资料</h1>
+                <p>管理您的任务和时间</p>
+            </div>
+
+            <div class="stats-container" id="stats-container">
+                <!-- 统计卡片动态生成 -->
+            </div>
+
+
+            <div class="profile-section">
+                <h3><span>📝</span> 新建事件时间流</h3>
+                <div id="created-tasks">
+                    <!-- 动态生成 -->
+                </div>
+            </div>
+
+            <div class="profile-section">
+                <h3><span>✅</span> 完成事项时间流</h3>
+                <div id="completed-tasks">
+                    <!-- 动态生成 -->
+                </div>
+            </div>
+            
+            <div class="chart-container">
+                <canvas id="categoryChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑任务模态框 -->
+    <div class="modal" id="taskModal">
+        <div class="modal-content">
+            <div class="modal-header" id="modalTitle">添加新任务</div>
+            
+            <form id="taskForm">
+                <div class="form-group">
+                    <label for="taskTitle">任务标题 *</label>
+                    <input type="text" id="taskTitle" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="taskDesc">任务描述</label>
+                    <textarea id="taskDesc" placeholder="详细描述您的任务..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="taskCategory">任务分类</label>
+                    <select id="taskCategory">
+                        <option value="work">工作</option>
+                        <option value="personal">个人</option>
+                        <option value="study">学习</option>
+                        <option value="health">健康</option>
+                        <option value="family">家庭</option>
+                        <option value="other">其他</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>重要程度（当前：<span id="currentImportance">4星</span>）</label>
+                    <input type="range" id="importanceSlider" min="1" max="7" value="4" 
+                           oninput="updateImportanceDisplay(this.value)">
+                </div>
+
+                <div class="form-group">
+                    <label>紧急程度（当前：<span id="currentUrgency">1天</span>）</label>
+                    <select id="urgencySelect">
+                        <option value="0">1年</option>
+                        <option value="1">半年</option>
+                        <option value="2">3个月</option>
+                        <option value="3">1个月</option>
+                        <option value="4">1周</option>
+                        <option value="5" selected>3天</option>
+                        <option value="6">1天</option>
+                        <option value="7">10小时</option>
+                        <option value="8">4小时</option>
+                        <option value="9">2小时</option>
+                        <option value="10">1小时</option>
+                        <option value="11">30分钟</option>
+                        <option value="12">15分钟</option>
+                    </select>
+                </div>
+
+                <div class="button-group">
+                    <button type="button" class="btn btn-secondary" onclick="closeTaskModal()">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveTask()">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 右键菜单 -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" onclick="editTask()">
+            <span>✏️</span> 编辑
+        </div>
+        <div class="context-menu-item" onclick="completeTask()">
+            <span>✅</span> 完成
+        </div>
+        <div class="context-menu-item" onclick="deleteTask()">
+            <span>❌</span> 删除
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

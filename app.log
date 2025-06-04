@@ -1,0 +1,24 @@
+2025-06-04 14:05:43.241 | WARNING  | __main__:login:52 - Failed login attempt for: aaaa
+2025-06-04 14:05:49.188 | INFO     | __main__:register:69 - New user registered: aaaa
+2025-06-04 14:05:51.715 | INFO     | __main__:login:42 - User logged in: aaaa
+2025-06-04 14:38:42.373 | INFO     | __main__:login:42 - User logged in: aaaa
+2025-06-04 14:41:13.800 | INFO     | __main__:login:42 - User logged in: aaaa
+2025-06-04 14:43:48.328 | INFO     | __main__:login:42 - User logged in: aaaa
+2025-06-04 14:44:27.010 | INFO     | __main__:login:42 - User logged in: aaaa
+2025-06-04 14:46:18.185 | WARNING  | __main__:login:52 - Failed login attempt for: aaa
+2025-06-04 14:46:25.078 | INFO     | __main__:register:69 - New user registered: aaa
+2025-06-04 14:46:27.555 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 14:54:46.450 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 14:59:17.487 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 14:59:44.038 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:01:05.822 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:02:37.029 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:04:58.341 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:12:16.943 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:23:03.318 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:29:20.021 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:31:33.337 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:36:01.292 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:40:50.351 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:41:45.961 | INFO     | __main__:login:42 - User logged in: aaa
+2025-06-04 15:45:35.747 | INFO     | __main__:login:42 - User logged in: aaa
