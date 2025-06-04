@@ -1,10 +1,12 @@
 import os
+import re
 from flask_cors import CORS
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import create_engine
+from sqlalchemy.orm import scoped_session, sessionmaker
 from werkzeug.security import generate_password_hash, check_password_hash
-import os
 from datetime import datetime
 
 # 获取当前文件所在目录
@@ -19,17 +21,38 @@ app = Flask(__name__,
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # PostgreSQL configuration for Vercel
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your_secret_key_here_xxx')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your_secret_key_here')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-database_url = os.environ.get('DATABASE_URL', 'sqlite:///tasks.db')
 
-# Ensure proper PostgreSQL URI format
+# 处理 Vercel Postgres 连接字符串
+raw_url = os.environ.get('POSTGRES_URL', os.environ.get('DATABASE_URL', 'sqlite:///tasks.db'))
+
+# 转换 Prisma 格式
+if raw_url.startswith('prisma://'):
+    # 提取连接参数
+    match = re.match(r'prisma://([^:]+):([^@]+)@([^:]+):(\d+)/([^\?]+)\?([^=]+)=([^&]+)', raw_url)
+    if match:
+        user, password, host, port, dbname, _, connection_limit = match.groups()
+        # 构建标准 PostgreSQL 连接字符串
+        database_url = f'postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode=require'
+    else:
+        database_url = 'sqlite:///tasks.db'
+else:
+    database_url = raw_url
+
+# 确保使用 postgresql:// 协议
 if database_url.startswith('postgres://'):
     database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 
-# Initialize database
+# 初始化数据库
 db = SQLAlchemy(app)
+
+# 创建数据库引擎 (连接池)
+engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'], pool_size=10, max_overflow=20)
+db_session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
+
 
 # Initialize login manager
 login_manager = LoginManager()
@@ -89,6 +112,18 @@ with app.app_context():
 def load_user(user_id):
     return User.query.get(int(user_id))
 
+# 在应用启动时执行优化
+@app.before_first_request
+def optimize_db():
+    statements = [
+        "SET statement_timeout = 30000",  # 30秒超时
+        "SET idle_in_transaction_session_timeout = 10000",
+        "ALTER DATABASE current SET work_mem = '16MB'"
+    ]
+    for stmt in statements:
+        db.session.execute(stmt)
+    db.session.commit()
+    
 # Routes
 @app.route('/')
 def index():
@@ -240,11 +275,28 @@ def category_stats():
     
     return jsonify(category_counts)
 
+# 添加临时路由检查连接字符串
+@app.route('/debug/db_url')
+def debug_db_url():
+    return jsonify({
+        'raw_url': os.environ.get('POSTGRES_URL', 'not found'),
+        'processed_url': app.config['SQLALCHEMY_DATABASE_URI']
+    })
 
-# 在请求结束后关闭数据库连接
+# 添加数据库连接测试路由
+@app.route('/debug/db_test')
+def debug_db_test():
+    try:
+        result = db.session.execute('SELECT version()').fetchone()
+        return jsonify({'status': 'success', 'version': result[0]})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# 在请求结束后关闭会话
 @app.teardown_appcontext
 def shutdown_session(exception=None):
-    db.session.remove()
+    db_session.remove()
     
+
 # Vercel requires 'application' object
 application = app
