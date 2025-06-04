@@ -1,17 +1,20 @@
+from flask_cors import CORS
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from models import db, User, Task
-from loguru import logger
-import json
+# from loguru import logger
+import os
 from datetime import datetime
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})  # 允许所有跨域请求
+
 app.config['SECRET_KEY'] = 'your_secret_key_here'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///tasks.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///tasks.db').replace("postgres://", "postgresql://", 1)
 
 # 配置日志
-logger.add("app.log", rotation="10 MB", retention="10 days", level="DEBUG")
+# logger.add("app.log", rotation="10 MB", retention="10 days", level="DEBUG")
 
 # 初始化数据库
 db.init_app(app)
@@ -39,7 +42,7 @@ def login():
     
     if user and user.check_password(password):
         login_user(user)
-        logger.info(f"User logged in: {username}")
+        # logger.info(f"User logged in: {username}")
         return jsonify({
             'success': True, 
             'user': {
@@ -49,7 +52,7 @@ def login():
             }
         })
     
-    logger.warning(f"Failed login attempt for: {username}")
+    # logger.warning(f"Failed login attempt for: {username}")
     return jsonify({'success': False, 'message': '无效的用户名或密码'}), 401
 
 @app.route('/register', methods=['POST'])
@@ -66,7 +69,7 @@ def register():
     db.session.add(new_user)
     db.session.commit()
     
-    logger.info(f"New user registered: {username}")
+    # logger.info(f"New user registered: {username}")
     return jsonify({'success': True})
 
 @app.route('/logout')
@@ -178,7 +181,12 @@ def category_stats():
     
     return jsonify(category_counts)
 
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    app.run(debug=True, port=8881)
+application = app  # Vercel 要求导出 application 对象
+
+# if __name__ == '__main__':
+#     with app.app_context():
+#         db.create_all()
+#     app.run(debug=True, port=8881)
+# else:
+#     # 为了Vercel部署，导出app实例
+#     application = app
