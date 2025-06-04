@@ -28,19 +28,16 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 raw_url = os.environ.get('POSTGRES_URL', os.environ.get('DATABASE_URL', 'sqlite:///tasks.db'))
 
 # 转换 Prisma 格式
+# Convert Prisma URL to standard PostgreSQL format
 if raw_url.startswith('prisma://'):
-    # 提取连接参数
-    match = re.match(r'prisma://([^:]+):([^@]+)@([^:]+):(\d+)/([^\?]+)\?([^=]+)=([^&]+)', raw_url)
-    if match:
-        user, password, host, port, dbname, _, connection_limit = match.groups()
-        # 构建标准 PostgreSQL 连接字符串
-        database_url = f'postgresql://{user}:{password}@{host}:{port}/{dbname}?sslmode=require'
-    else:
-        database_url = 'sqlite:///tasks.db'
+    database_url = raw_url.replace('prisma://', 'postgresql://', 1)
+    # Ensure SSL is required
+    if 'sslmode=require' not in database_url:
+        database_url += '&sslmode=require' if '?' in database_url else '?sslmode=require'
 else:
     database_url = raw_url
 
-# 确保使用 postgresql:// 协议
+# Ensure standard PostgreSQL format
 if database_url.startswith('postgres://'):
     database_url = database_url.replace('postgres://', 'postgresql://', 1)
 
