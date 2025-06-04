@@ -1,33 +1,95 @@
+import os
 from flask_cors import CORS
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from models import db, User, Task
-# from loguru import logger
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 import os
 from datetime import datetime
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})  # 允许所有跨域请求
+# 获取当前文件所在目录
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# 静态文件和模板的路径
+static_path = os.path.join(current_dir, '..', 'static')
+template_path = os.path.join(current_dir, '..', 'templates')
 
-app.config['SECRET_KEY'] = 'your_secret_key_here'
+app = Flask(__name__, 
+            static_folder=static_path,
+            template_folder=template_path)
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+# PostgreSQL configuration for Vercel
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your_secret_key_here_xxx')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///tasks.db').replace("postgres://", "postgresql://", 1)
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///tasks.db')
 
-# 配置日志
-# logger.add("app.log", rotation="10 MB", retention="10 days", level="DEBUG")
+# Ensure proper PostgreSQL URI format
+if database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 
-# 初始化数据库
-db.init_app(app)
+# Initialize database
+db = SQLAlchemy(app)
 
-# 初始化登录管理
+# Initialize login manager
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
+# Define models
+class User(UserMixin, db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    
+    tasks = db.relationship('Task', backref='user', lazy=True, cascade='all, delete-orphan')
+    
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+class Task(db.Model):
+    __tablename__ = 'tasks'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    title = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    category = db.Column(db.String(20), default='other')
+    importance = db.Column(db.Integer, nullable=False)
+    urgency = db.Column(db.Integer, nullable=False)
+    completed = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'category': self.category,
+            'importance': self.importance,
+            'urgency': self.urgency,
+            'completed': self.completed,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None
+        }
+
+# Create tables in application context
+with app.app_context():
+    db.create_all()
+
+# Login manager setup
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
+# Routes
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -42,7 +104,6 @@ def login():
     
     if user and user.check_password(password):
         login_user(user)
-        # logger.info(f"User logged in: {username}")
         return jsonify({
             'success': True, 
             'user': {
@@ -52,7 +113,6 @@ def login():
             }
         })
     
-    # logger.warning(f"Failed login attempt for: {username}")
     return jsonify({'success': False, 'message': '无效的用户名或密码'}), 401
 
 @app.route('/register', methods=['POST'])
@@ -69,7 +129,6 @@ def register():
     db.session.add(new_user)
     db.session.commit()
     
-    # logger.info(f"New user registered: {username}")
     return jsonify({'success': True})
 
 @app.route('/logout')
@@ -181,12 +240,11 @@ def category_stats():
     
     return jsonify(category_counts)
 
-application = app  # Vercel 要求导出 application 对象
 
-# if __name__ == '__main__':
-#     with app.app_context():
-#         db.create_all()
-#     app.run(debug=True, port=8881)
-# else:
-#     # 为了Vercel部署，导出app实例
-#     application = app
+# 在请求结束后关闭数据库连接
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db.session.remove()
+    
+# Vercel requires 'application' object
+application = app
