@@ -30,48 +30,24 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # 处理 Vercel Postgres 连接字符串
 raw_url = os.environ.get('POSTGRES_URL', os.environ.get('DATABASE_URL', 'sqlite:///tasks.db'))
 
-# 改进的 Prisma Accelerate 解析函数
 def parse_prisma_url(url):
     try:
-        # 解析基础URL结构
+        # 提取基础URL和API密钥
         match = re.match(r"prisma(?:\+postgres)?://([^/]+)/?\?(.+)", url)
-        if not match:
-            return None
+        if not match: return None
             
         host = match.group(1)
         query_str = match.group(2)
-        
-        # 解析查询参数
         query_params = dict(urllib.parse.parse_qsl(query_str))
         api_key = query_params.get('api_key', '')
         
-        if not api_key:
-            return None
+        if not api_key: return None
             
-        # 尝试从 API key (JWT) 中提取租户 ID
-        try:
-            # JWT格式: header.payload.signature
-            parts = api_key.split('.')
-            if len(parts) >= 2:
-                # Base64 解码 payload (需添加填充)
-                payload_encoded = parts[1]
-                # 添加必要的填充
-                payload_encoded += '=' * (4 - len(payload_encoded) % 4)
-                payload_json = base64.urlsafe_b64decode(payload_encoded).decode('utf-8')
-                payload = json.loads(payload_json)
-                tenant_id = payload.get('tenant_id', '')
-                # 如果从 JWT 中成功获取租户 ID，使用它
-                if tenant_id:
-                    return f"postgresql://{host}:6543?sslmode=require&user=prisma&tenant_id={tenant_id}&api_key={api_key}"
-        except Exception as e:
-            print(f"JWT 解析错误: {str(e)}")
-            # 如果无法解析 JWT，回退到默认处理
-        
-        # 默认连接格式（不使用 tenant_id）
-        return f"postgresql://{host}:6543?sslmode=require&user=prisma&api_key={api_key}"
+        # 仅保留必要参数，移除tenant_id等非标准参数
+        return f"postgresql://{host}:6543?sslmode=require&api_key={api_key}"
     
     except Exception as e:
-        print(f"Prisma URL 解析错误: {str(e)}")
+        print(f"Prisma URL解析错误: {str(e)}")
         return None
 
 # 处理连接字符串
@@ -109,6 +85,9 @@ db = SQLAlchemy(app)
 # 创建数据库引擎 (连接池)
 engine = create_engine(
     app.config['SQLALCHEMY_DATABASE_URI'].replace('postgresql://', 'postgresql+psycopg2://'),
+    connect_args={
+        'options': '-c statement_timeout=30000 -c idle_in_transaction_session_timeout=10000'
+    },
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,  # 自动检测连接是否有效
@@ -367,6 +346,15 @@ def pool_status():
     return jsonify({
         'checked_out': engine.pool.checkedout(),
         'checked_in': engine.pool.checkedin()
+    })
+
+@app.route('/debug/conn_params')
+def debug_conn_params():
+    raw_url = os.environ.get('POSTGRES_URL', '')
+    return jsonify({
+        "raw_url": raw_url,
+        "processed_url": app.config['SQLALCHEMY_DATABASE_URI'],
+        "valid": "tenant_id" not in app.config['SQLALCHEMY_DATABASE_URI']
     })
 
 # 在请求结束后关闭会话
