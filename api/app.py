@@ -1,5 +1,6 @@
 import os
 import re
+import urllib.parse
 from flask_cors import CORS
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -24,37 +25,66 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your_secret_key_here')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# 处理 Vercel Postgres 连接字符串
+# 处理 Vercel Postgres 连接字符串（Prisma Accelerate 专用格式）
 raw_url = os.environ.get('POSTGRES_URL', os.environ.get('DATABASE_URL', 'sqlite:///tasks.db'))
 
-# 修正后代码
-if raw_url.startswith('prisma://'):
-    # 完全移除prisma前缀，使用标准postgresql
-    database_url = re.sub(r'^prisma://', 'postgresql://', raw_url) 
-    # 确保SSL配置
-    if '?' in database_url:
-        database_url += '&sslmode=require'
-    else:
-        database_url += '?sslmode=require'
-elif raw_url.startswith('postgres://'):
-    database_url = raw_url.replace('postgres://', 'postgresql://', 1)
-elif raw_url.startswith("prisma+postgres://"):
-    database_url = raw_url.replace("prisma+postgres://", "postgresql://", 1)
+# 解析 Prisma Accelerate 格式的 URL
+def parse_prisma_url(url):
+    try:
+        # 解析主机和参数
+        pattern = r"prisma(?:\+postgres)?://([^/]+)/?\?([^#]+)"
+        match = re.search(pattern, url)
+        
+        if not match:
+            return None
+            
+        host = match.group(1)
+        params_str = match.group(2)
+        
+        # 解析查询参数
+        params = dict(urllib.parse.parse_qsl(params_str))
+        
+        # 确保必要的参数存在
+        if 'tenant_id' not in params or 'api_key' not in params:
+            return None
+            
+        # 构建标准连接字符串
+        return f"postgresql://{host}:6543?sslmode=require&user=prisma&tenant_id={params['tenant_id']}&api_key={params['api_key']}"
+    
+    except Exception as e:
+        print(f"Error parsing Prisma URL: {str(e)}")
+        return None
 
-# Ensure standard PostgreSQL format
-if database_url.startswith('postgres://'):
-    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+# 优先处理 Prisma Accelerate 格式
+if raw_url.startswith('prisma://') or raw_url.startswith('prisma+postgres://'):
+    database_url = parse_prisma_url(raw_url)
+    if database_url is None:
+        raise ValueError("Invalid Prisma Accelerate URL format")
+else:
+    # 处理其他格式
+    database_url = raw_url
+    # 转换其他格式
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    # 确保SSL
+    if 'sslmode=require' not in database_url:
+        if '?' in database_url:
+            database_url += '&sslmode=require'
+        else:
+            database_url += '?sslmode=require'
 
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+app.config['SQLALACHEMY_DATABASE_URI'] = database_url
 
 # 初始化数据库
 db = SQLAlchemy(app)
 
 # 创建数据库引擎 (连接池)
 engine = create_engine(
-    app.config['SQLALCHEMY_DATABASE_URI'].replace('postgresql://', 'postgresql+psycopg2://'),
+    app.config['SQLALACHEMY_DATABASE_URI'].replace('postgresql://', 'postgresql+psycopg2://'),
     pool_size=10,
-    max_overflow=20
+    max_overflow=20,
+    pool_pre_ping=True,  # 自动检测连接是否有效
+    pool_recycle=300  # 5分钟回收连接
 )
 db_session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 
