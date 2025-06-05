@@ -38,6 +38,8 @@ if raw_url.startswith('prisma://'):
         database_url += '?sslmode=require'
 elif raw_url.startswith('postgres://'):
     database_url = raw_url.replace('postgres://', 'postgresql://', 1)
+elif raw_url.startswith("prisma+postgres://"):
+    database_url = raw_url.replace("prisma+postgres://", "postgresql://", 1)
 
 # Ensure standard PostgreSQL format
 if database_url.startswith('postgres://'):
