@@ -12,9 +12,8 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
-# 获取当前文件所在目录
+# Get current directory paths
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# 静态文件和模板的路径
 static_path = os.path.join(current_dir, '..', 'static')
 template_path = os.path.join(current_dir, '..', 'templates')
 
@@ -23,78 +22,64 @@ app = Flask(__name__,
             template_folder=template_path)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# PostgreSQL configuration for Vercel
+# Configuration
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your_secret_key_here')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# 处理 Vercel Postgres 连接字符串
-raw_url = os.environ.get('POSTGRES_URL', os.environ.get('DATABASE_URL', 'sqlite:///tasks.db'))
-
-def parse_prisma_url(url):
-    try:
-        # 提取基础URL和API密钥
-        match = re.match(r"prisma(?:\+postgres)?://([^/]+)/?\?(.+)", url)
-        if not match: return None
-            
-        host = match.group(1)
-        query_str = match.group(2)
-        query_params = dict(urllib.parse.parse_qsl(query_str))
-        api_key = query_params.get('api_key', '')
-        
-        if not api_key: return None
-            
-        # 仅保留必要参数，移除tenant_id等非标准参数
-        return f"postgresql://{host}:6543?sslmode=require&api_key={api_key}"
+# Database URL handling
+def get_database_url():
+    # Priority: 1. POSTGRES_URL 2. DATABASE_URL 3. SQLite fallback
+    raw_url = os.environ.get('POSTGRES_URL') or os.environ.get('DATABASE_URL') or 'sqlite:///tasks.db'
     
-    except Exception as e:
-        print(f"Prisma URL解析错误: {str(e)}")
-        return None
+    # Handle Prisma Accelerate URLs
+    if raw_url.startswith('prisma+postgres://') or raw_url.startswith('prisma://'):
+        # Extract components from Prisma URL
+        match = re.match(r"prisma(?:\+postgres)?://([^/]+)/?\?(.+)", raw_url)
+        if not match:
+            raise ValueError(f"Invalid Prisma URL format: {raw_url}")
+        
+        host = match.group(1)
+        query_params = dict(urllib.parse.parse_qsl(match.group(2)))
+        api_key = query_params.get('api_key')
+        tenant_id = query_params.get('tenant_id')
+        
+        if not api_key or not tenant_id:
+            raise ValueError("Missing api_key or tenant_id in Prisma URL")
+        
+        # Construct direct connection URL using tenant ID as database name
+        return f"postgresql://{tenant_id}:{api_key}@{host}:6543/{tenant_id}?sslmode=require"
+    
+    # Convert postgres:// to postgresql://
+    if raw_url.startswith('postgres://'):
+        raw_url = raw_url.replace('postgres://', 'postgresql://', 1)
+    
+    # Ensure SSL for PostgreSQL connections
+    if raw_url.startswith('postgresql://') and 'sslmode=' not in raw_url:
+        raw_url += '?sslmode=require' if '?' not in raw_url else '&sslmode=require'
+    
+    return raw_url
 
-# 处理连接字符串
-if raw_url.startswith('prisma://') or raw_url.startswith('prisma+postgres://'):
-    database_url = parse_prisma_url(raw_url)
-    if database_url is None:
-        # 创建更清晰的错误消息
-        raise ValueError(f"无法解析 Prisma Accelerate URL: {raw_url}")
-else:
-    # 处理其他格式
-    database_url = raw_url
-    if database_url.startswith('postgres://'):
-        database_url = database_url.replace('postgres://', 'postgresql://', 1)
-    # 确保 SSL 配置
-    if 'sslmode=require' not in database_url:
-        if '?' in database_url:
-            database_url += '&sslmode=require'
-        else:
-            database_url += '?sslmode=require'
+app.config['SQLALCHEMY_DATABASE_URI'] = get_database_url()
 
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-
-# 添加调试路由以显示处理后的连接字符串
-@app.route('/debug/formatted_url')
-def formatted_url():
-    return jsonify({
-        "raw_url": raw_url,
-        "processed_url": database_url,
-        "is_valid": database_url.startswith("postgresql://")
-    })
-
-# 初始化数据库
+# Initialize database
 db = SQLAlchemy(app)
 
-# 创建数据库引擎 (连接池)
+# Create database engine with connection pooling
 engine = create_engine(
-    app.config['SQLALCHEMY_DATABASE_URI'].replace('postgresql://', 'postgresql+psycopg2://'),
-    connect_args={
-        'options': '-c statement_timeout=30000 -c idle_in_transaction_session_timeout=10000'
-    },
+    app.config['SQLALCHEMY_DATABASE_URI'],
     pool_size=10,
     max_overflow=20,
-    pool_pre_ping=True,  # 自动检测连接是否有效
-    pool_recycle=300  # 5分钟回收连接
+    pool_pre_ping=True,
+    pool_recycle=300,
+    connect_args={
+        'connect_timeout': 10,
+        'keepalives': 1,
+        'keepalives_idle': 30,
+        'keepalives_interval': 10,
+        'keepalives_count': 5
+    }
 )
 db_session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
-
 
 # Initialize login manager
 login_manager = LoginManager()
@@ -147,25 +132,31 @@ class Task(db.Model):
 
 # Create tables in application context
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+    except Exception as e:
+        print(f"Database initialization error: {str(e)}")
 
 # Login manager setup
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# 在应用启动时执行优化
+# Database optimization
 @app.before_first_request
 def optimize_db():
-    statements = [
-        "SET statement_timeout = 30000",  # 30秒超时
-        "SET idle_in_transaction_session_timeout = 10000",
-        "ALTER DATABASE current SET work_mem = '16MB'"
-    ]
-    for stmt in statements:
-        db.session.execute(stmt)
-    db.session.commit()
-    
+    try:
+        if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql'):
+            statements = [
+                "SET statement_timeout = 30000",
+                "SET idle_in_transaction_session_timeout = 10000"
+            ]
+            for stmt in statements:
+                db.session.execute(stmt)
+            db.session.commit()
+    except Exception as e:
+        print(f"Database optimization error: {str(e)}")
+
 # Routes
 @app.route('/')
 def index():
