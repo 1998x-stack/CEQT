@@ -27,15 +27,17 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # 处理 Vercel Postgres 连接字符串
 raw_url = os.environ.get('POSTGRES_URL', os.environ.get('DATABASE_URL', 'sqlite:///tasks.db'))
 
-# 转换 Prisma 格式
-# Convert Prisma URL to standard PostgreSQL format
+# 修正后代码
 if raw_url.startswith('prisma://'):
-    database_url = raw_url.replace('prisma://', 'postgresql://', 1)
-    # Ensure SSL is required
-    if 'sslmode=require' not in database_url:
-        database_url += '&sslmode=require' if '?' in database_url else '?sslmode=require'
-else:
-    database_url = raw_url
+    # 完全移除prisma前缀，使用标准postgresql
+    database_url = re.sub(r'^prisma://', 'postgresql://', raw_url) 
+    # 确保SSL配置
+    if '?' in database_url:
+        database_url += '&sslmode=require'
+    else:
+        database_url += '?sslmode=require'
+elif raw_url.startswith('postgres://'):
+    database_url = raw_url.replace('postgres://', 'postgresql://', 1)
 
 # Ensure standard PostgreSQL format
 if database_url.startswith('postgres://'):
@@ -47,7 +49,11 @@ app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 db = SQLAlchemy(app)
 
 # 创建数据库引擎 (连接池)
-engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'], pool_size=10, max_overflow=20)
+engine = create_engine(
+    app.config['SQLALCHEMY_DATABASE_URI'].replace('postgresql://', 'postgresql+psycopg2://'),
+    pool_size=10,
+    max_overflow=20
+)
 db_session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 
 
@@ -288,6 +294,20 @@ def debug_db_test():
         return jsonify({'status': 'success', 'version': result[0]})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+    
+@app.route('/debug/conn_string')
+def debug_conn():
+    return jsonify({
+        'final_url': app.config['SQLALCHEMY_DATABASE_URI'],
+        'is_valid': 'postgresql://' in app.config['SQLALCHEMY_DATABASE_URI']
+    })
+
+@app.route('/debug/pool_status')
+def pool_status():
+    return jsonify({
+        'checked_out': engine.pool.checkedout(),
+        'checked_in': engine.pool.checkedin()
+    })
 
 # 在请求结束后关闭会话
 @app.teardown_appcontext
