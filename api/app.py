@@ -108,7 +108,7 @@ db = SQLAlchemy(app)
 
 # 创建数据库引擎 (连接池)
 engine = create_engine(
-    app.config['SQLALACHEMY_DATABASE_URI'].replace('postgresql://', 'postgresql+psycopg2://'),
+    app.config['SQLALCHEMY_DATABASE_URI'].replace('postgresql://', 'postgresql+psycopg2://'),
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,  # 自动检测连接是否有效
