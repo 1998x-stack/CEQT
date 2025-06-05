@@ -1,6 +1,8 @@
 import os
 import re
 import urllib.parse
+import json
+import base64
 from flask_cors import CORS
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -25,55 +27,81 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your_secret_key_here')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# 处理 Vercel Postgres 连接字符串（Prisma Accelerate 专用格式）
+# 处理 Vercel Postgres 连接字符串
 raw_url = os.environ.get('POSTGRES_URL', os.environ.get('DATABASE_URL', 'sqlite:///tasks.db'))
 
-# 解析 Prisma Accelerate 格式的 URL
+# 改进的 Prisma Accelerate 解析函数
 def parse_prisma_url(url):
     try:
-        # 解析主机和参数
-        pattern = r"prisma(?:\+postgres)?://([^/]+)/?\?([^#]+)"
-        match = re.search(pattern, url)
-        
+        # 解析基础URL结构
+        match = re.match(r"prisma(?:\+postgres)?://([^/]+)/?\?(.+)", url)
         if not match:
             return None
             
         host = match.group(1)
-        params_str = match.group(2)
+        query_str = match.group(2)
         
         # 解析查询参数
-        params = dict(urllib.parse.parse_qsl(params_str))
+        query_params = dict(urllib.parse.parse_qsl(query_str))
+        api_key = query_params.get('api_key', '')
         
-        # 确保必要的参数存在
-        if 'tenant_id' not in params or 'api_key' not in params:
+        if not api_key:
             return None
             
-        # 构建标准连接字符串
-        return f"postgresql://{host}:6543?sslmode=require&user=prisma&tenant_id={params['tenant_id']}&api_key={params['api_key']}"
+        # 尝试从 API key (JWT) 中提取租户 ID
+        try:
+            # JWT格式: header.payload.signature
+            parts = api_key.split('.')
+            if len(parts) >= 2:
+                # Base64 解码 payload (需添加填充)
+                payload_encoded = parts[1]
+                # 添加必要的填充
+                payload_encoded += '=' * (4 - len(payload_encoded) % 4)
+                payload_json = base64.urlsafe_b64decode(payload_encoded).decode('utf-8')
+                payload = json.loads(payload_json)
+                tenant_id = payload.get('tenant_id', '')
+                # 如果从 JWT 中成功获取租户 ID，使用它
+                if tenant_id:
+                    return f"postgresql://{host}:6543?sslmode=require&user=prisma&tenant_id={tenant_id}&api_key={api_key}"
+        except Exception as e:
+            print(f"JWT 解析错误: {str(e)}")
+            # 如果无法解析 JWT，回退到默认处理
+        
+        # 默认连接格式（不使用 tenant_id）
+        return f"postgresql://{host}:6543?sslmode=require&user=prisma&api_key={api_key}"
     
     except Exception as e:
-        print(f"Error parsing Prisma URL: {str(e)}")
+        print(f"Prisma URL 解析错误: {str(e)}")
         return None
 
-# 优先处理 Prisma Accelerate 格式
+# 处理连接字符串
 if raw_url.startswith('prisma://') or raw_url.startswith('prisma+postgres://'):
     database_url = parse_prisma_url(raw_url)
     if database_url is None:
-        raise ValueError("Invalid Prisma Accelerate URL format")
+        # 创建更清晰的错误消息
+        raise ValueError(f"无法解析 Prisma Accelerate URL: {raw_url}")
 else:
     # 处理其他格式
     database_url = raw_url
-    # 转换其他格式
     if database_url.startswith('postgres://'):
         database_url = database_url.replace('postgres://', 'postgresql://', 1)
-    # 确保SSL
+    # 确保 SSL 配置
     if 'sslmode=require' not in database_url:
         if '?' in database_url:
             database_url += '&sslmode=require'
         else:
             database_url += '?sslmode=require'
 
-app.config['SQLALACHEMY_DATABASE_URI'] = database_url
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+
+# 添加调试路由以显示处理后的连接字符串
+@app.route('/debug/formatted_url')
+def formatted_url():
+    return jsonify({
+        "raw_url": raw_url,
+        "processed_url": database_url,
+        "is_valid": database_url.startswith("postgresql://")
+    })
 
 # 初始化数据库
 db = SQLAlchemy(app)
